@@ -17,7 +17,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn import set_config # output in pandas dataframe of pipeline
+from sklearn import set_config  # output in pandas dataframe of pipeline
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -32,6 +32,8 @@ if __name__ == "__main__":
 
     base_dir = "/opt/ml/processing/"
     pathlib.Path(f"{base_dir}/data").mkdir(parents=True, exist_ok=True)
+    pathlib.Path(f"{base_dir}/artifacts").mkdir(parents=True, exist_ok=True)  # Added artifacts directory creation
+
     input_data = args.input_data
     bucket = input_data.split("/")[2]
     key = "/".join(input_data.split("/")[3:])
@@ -39,38 +41,40 @@ if __name__ == "__main__":
     logger.info("Downloading data from bucket: %s, key: %s", bucket, key)
     s3_path = f"{base_dir}/data/input.csv"
     s3 = boto3.resource("s3")
-    s3.Bucket(bucket).download_file(key, fn)
+    try:
+        s3.Bucket(bucket).download_file(key, s3_path)  # Fixed 'fn' to 's3_path'
+    except Exception as e:
+        logger.error(f"Failed to download file from S3: {e}")
+        raise
 
     logger.info("Reading downloaded data.")
-    df = pd.read_csv(fn)
+    df = pd.read_csv(s3_path)  # Fixed 'fn' to 's3_path'
 
     logger.info("First Row of Dataframe")
     print(df.head(1))
 
-    os.unlink(fn)
+    os.unlink(s3_path)  # Fixed 'fn' to 's3_path'
 
     logger.info("Splitting Main dataset for Training")
     main, stream = train_test_split(df, test_size=0.15, stratify=df["Is Fraudulent"], random_state=108)
-    print(main.shape)
+    logger.info(f"Main shape: {main.shape}")
 
     logger.info("Splitting stream and onHold set")
     stream, onhold = train_test_split(stream, test_size=0.4, stratify=stream["Is Fraudulent"], random_state=108)
-    print(stream.shape)
-    print(onhold.shape)
+    logger.info(f"Stream shape: {stream.shape}")
+    logger.info(f"Onhold shape: {onhold.shape}")
 
-    logger.info("splitting the Main dataset in X, y")
-    
-    X = main.drop(["Is Fraudulent"],axis = 1)
+    logger.info("Splitting the Main dataset in X, y")
+    X = main.drop(["Is Fraudulent"], axis=1)
     y = main["Is Fraudulent"]
 
-    X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.18, stratify=y, random_state=108)
-    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.18, stratify=y, random_state=108)
+
     class FrequencyEncoder(BaseEstimator, TransformerMixin):
         def __init__(self):
             self.freq_dict = {}
 
         def fit(self, X, y=None):
-            # X can be a DataFrame or array; convert to Series if single column
             if isinstance(X, pd.DataFrame):
                 for col in X.columns:
                     self.freq_dict[col] = X[col].value_counts().to_dict()
@@ -86,27 +90,21 @@ if __name__ == "__main__":
                 return X_transformed
             else:
                 return pd.Series(X).map(self.freq_dict.get('col', {})).fillna(0).values
-    
-   
+
     class FeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
         def __init__(self):
             self.scaler_amount_zscore = StandardScaler()
             self.shipping_address_freq = {}
-
-            # These are computed from training data
-            self.high_amount_quantile = None 
+            self.high_amount_quantile = None
             self.high_quantity_quantile = None
 
         def fit(self, X, y=None):
             X = X.copy()
-            # Fit scaler for 'Transaction Amount' to create 'Amount_zscore' and calculating high quartile value
             if 'Transaction Amount' in X.columns:
                 self.scaler_amount_zscore.fit(X[['Transaction Amount']])
                 self.high_amount_quantile = np.percentile(X['Transaction Amount'], 95)
-            # High quantity quartile value
             if 'Quantity' in X.columns:
-                 self.high_quantity_quantile = np.percentile(X['Quantity'], 95)
-            # Compute frequency mapping for 'Shipping Address'
+                self.high_quantity_quantile = np.percentile(X['Quantity'], 95)
             if 'Shipping Address' in X.columns:
                 self.shipping_address_freq = X['Shipping Address'].value_counts().to_dict()
             return self
@@ -143,8 +141,8 @@ if __name__ == "__main__":
                 X['Is_Month_End'] = X['Transaction Date'].dt.is_month_end.astype(int)
 
             if 'Transaction Hour' in X.columns:
-                X['Hour_Bin'] = pd.cut(X['Transaction Hour'], bins=[-np.inf, 6, 12, 18, np.inf], 
-                                      labels=['Night', 'Morning', 'Afternoon', 'Evening'])
+                X['Hour_Bin'] = pd.cut(X['Transaction Hour'], bins=[-np.inf, 6, 12, 18, np.inf],
+                                       labels=['Night', 'Morning', 'Afternoon', 'Evening'])
                 X['hour_sin'] = np.sin(2 * np.pi * X['Transaction Hour'] / 24)
                 X['hour_cos'] = np.cos(2 * np.pi * X['Transaction Hour'] / 24)
                 X['Unusual_Hour_Flag'] = ((X['Transaction Hour'] < 6) | (X['Transaction Hour'] > 22)).astype(int)
@@ -155,12 +153,14 @@ if __name__ == "__main__":
 
             if 'Month' in X.columns:
                 X['month_sin'] = np.sin(2 * np.pi * X['Month'] / 12)
+                X['month_cos'] =iễm
+
                 X['month_cos'] = np.cos(2 * np.pi * X['Month'] / 12)
 
             ### Customer Profile Features
             if 'Customer Age' in X.columns:
-                X['Age_Category'] = pd.cut(X['Customer Age'], bins=[-np.inf, 0, 25, 35, 50, 65, np.inf], 
-                                          labels=['Invalid', 'Young', 'Young_Adult', 'Adult', 'Senior', 'Elder'])
+                X['Age_Category'] = pd.cut(X['Customer Age'], bins=[-np.inf, 0, 25, 35, 50, 65, np.inf],
+                                           labels=['Invalid', 'Young', 'Young_Adult', 'Adult', 'Senior', 'Elder'])
 
             if 'Account Age Days' in X.columns:
                 X['Account_Age_Weeks'] = X['Account Age Days'] // 7
@@ -201,22 +201,19 @@ if __name__ == "__main__":
             return X
 
     def create_preprocessing_pipeline():
-        # Categorical columns after feature engineering
-        low_cardinality_cols = ['Payment Method', 'Product Category', 'Device Used', 
-                               'Hour_Bin', 'Age_Category', 'Transaction_Size']
+        low_cardinality_cols = ['Payment Method', 'Product Category', 'Device Used',
+                                'Hour_Bin', 'Age_Category', 'Transaction_Size']
         high_cardinality_cols = ['Customer Location', 'Location_Device']
 
-        # Encoding transformer
         encoding_transformer = ColumnTransformer(
             transformers=[
-                ('onehot', OneHotEncoder(drop='first', sparse_output=False, handle_unknown='ignore'), 
+                ('onehot', OneHotEncoder(drop='first', sparse_output=False, handle_unknown='ignore'),
                  low_cardinality_cols),
                 ('freq', FrequencyEncoder(), high_cardinality_cols)
             ],
-            remainder='passthrough'  # Pass through numerical columns
+            remainder='passthrough'
         )
 
-        # Full preprocessing pipeline
         preprocessing_pipeline = Pipeline([
             ('feature_engineering', FeatureEngineeringTransformer()),
             ('encoding', encoding_transformer),
@@ -224,22 +221,23 @@ if __name__ == "__main__":
         ])
 
         return preprocessing_pipeline
-    
-    logger.info("Preprocessing pipeline initiated")
 
+    logger.info("Preprocessing pipeline initiated")
     preprocessing_pipeline = create_preprocessing_pipeline()
 
-    set_config(transform_output="pandas") # default o/p is numpy array, but to avoid explanability issues with models, need o/p in DataFrame
+    set_config(transform_output="pandas")
 
     logger.info("Fit and Transform X_train")
     X_train_transformed = preprocessing_pipeline.fit_transform(X_train)
+    logger.info(f"X_train_transformed shape: {X_train_transformed.shape}")
 
-    logger.info("Fit and Transform X_test")
+    logger.info("Transform X_test")
     X_test_transformed = preprocessing_pipeline.transform(X_test)
+    logger.info(f"X_test_transformed shape: {X_test_transformed.shape}")
 
     logger.info("Concatenating X and y for both train and test")
-    process_train_set_with_pipeline = pd.concat([X_train_transformed,y_train],axis=1)
-    process_test_set_with_pipeline = pd.concat([X_test_transformed,y_test],axis=1)
+    process_train_set_with_pipeline = pd.concat([X_train_transformed, y_train.reset_index(drop=True)], axis=1)
+    process_test_set_with_pipeline = pd.concat([X_test_transformed, y_test.reset_index(drop=True)], axis=1)
 
     logger.info("Writing out train, test, stream and onhold datasets to %s.", base_dir)
     process_train_set_with_pipeline.to_csv(f"{base_dir}/data/train.csv", index=False)
@@ -250,3 +248,5 @@ if __name__ == "__main__":
     logger.info("Exporting preprocessor.pkl file")
     with open(f"{base_dir}/artifacts/preprocessor.pkl", "wb") as f:
         pickle.dump(preprocessing_pipeline, f)
+
+    logger.info("Preprocessing completed successfully.")

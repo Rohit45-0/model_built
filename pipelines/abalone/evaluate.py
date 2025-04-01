@@ -1,4 +1,3 @@
-"""Evaluation script for measuring mean squared error."""
 import json
 import logging
 import pathlib
@@ -8,52 +7,66 @@ import tarfile
 import numpy as np
 import pandas as pd
 import xgboost
-
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
-
-
 if __name__ == "__main__":
-    logger.debug("Starting evaluation.")
+    logger.info("Starting evaluation.")
+
+    # Define input/output paths
     model_path = "/opt/ml/processing/model/model.tar.gz"
-    with tarfile.open(model_path) as tar:
+    test_data_path = "/opt/ml/processing/test/test.csv"
+    output_dir = "/opt/ml/processing/evaluation"
+
+    # Extract model
+    logger.info("Extracting model.")
+    with tarfile.open(model_path, "r:gz") as tar:
         tar.extractall(path=".")
 
-    logger.debug("Loading xgboost model.")
+    # Load XGBoost model
+    logger.info("Loading model.")
     model = pickle.load(open("xgboost-model", "rb"))
 
-    logger.debug("Reading test data.")
-    test_path = "/opt/ml/processing/test/test.csv"
-    df = pd.read_csv(test_path, header=None)
+    # Load test dataset
+    logger.info("Reading test dataset.")
+    df = pd.read_csv(test_data_path)  # Headers included from preprocess.py
 
-    logger.debug("Reading test data.")
-    y_test = df.iloc[:, 0].to_numpy()
-    df.drop(df.columns[0], axis=1, inplace=True)
-    X_test = xgboost.DMatrix(df.values)
+    # Split features and labels
+    y_test = df["Is Fraudulent"].to_numpy()  # Target column from preprocess.py
+    X_test = df.drop(columns=["Is Fraudulent"])
+    X_test_dmatrix = xgboost.DMatrix(X_test.values)
 
-    logger.info("Performing predictions against test data.")
-    predictions = model.predict(X_test)
+    # Perform predictions (probabilities)
+    logger.info("Performing predictions.")
+    probabilities = model.predict(X_test_dmatrix)
+    predictions = (probabilities >= 0.5).astype(int)  # Threshold at 0.5
 
-    logger.debug("Calculating mean squared error.")
-    mse = mean_squared_error(y_test, predictions)
-    std = np.std(y_test - predictions)
+    # Compute evaluation metrics
+    logger.info("Computing classification metrics.")
+    f1 = f1_score(y_test, predictions)
+    precision = precision_score(y_test, predictions)
+    recall = recall_score(y_test, predictions)
+    auc = roc_auc_score(y_test, probabilities)  # AUC uses probabilities
+
+    # Create evaluation report
     report_dict = {
-        "regression_metrics": {
-            "mse": {
-                "value": mse,
-                "standard_deviation": std
-            },
-        },
+        "classification_metrics": {
+            "f1": {"value": float(f1)},
+            "precision": {"value": float(precision)},
+            "recall": {"value": float(recall)},
+            "auc": {"value": float(auc)}
+        }
     }
 
-    output_dir = "/opt/ml/processing/evaluation"
+    # Save evaluation results
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    logger.info("Writing out evaluation report with mse: %f", mse)
     evaluation_path = f"{output_dir}/evaluation.json"
+    
+    logger.info("Saving evaluation results to %s", evaluation_path)
     with open(evaluation_path, "w") as f:
-        f.write(json.dumps(report_dict))
+        json.dump(report_dict, f)
+
+    logger.info("Evaluation complete.")

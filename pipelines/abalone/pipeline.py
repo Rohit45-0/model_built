@@ -82,7 +82,7 @@ def get_pipeline(
     model_approval_status = ParameterString(name="ModelApprovalStatus", default_value="PendingManualApproval")
     input_data = ParameterString(
         name="InputDataUrl",
-        default_value=f"s3://{default_bucket}/fraud-detection-dataset.csv",  # Replace with your fraud dataset S3 path
+        default_value=f"s3://akshronix-frauddata/Chandan's Playground MLOPS/Test 1/Whole Fraud Dataframe.csv",  # Replace with your fraud dataset S3 path
     )
 
     # Quality and bias check parameters
